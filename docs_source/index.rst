@@ -6,7 +6,7 @@
 State Machines for Selenium
 =======================================================
 
-A small library for running selenium test inside a state machine.
+A small library for running selenium tests by description interactions and assertions over their results with a state machine.
 
 .. automodule:: state_machine_testing
    :members: StateMachine
