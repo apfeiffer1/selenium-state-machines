@@ -9,7 +9,6 @@ from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from graphviz import Digraph
 import traceback
-import datetime
 
 
 class StateMachineCollection(object):
@@ -78,7 +77,8 @@ class StateMachineTransition(object):
 
     def set_target_state(self, obj):
         """
-        Set the state that this transition should put the execution in.
+        If ``obj`` is an instance of ``StateMachineState```, set as the target state.
+        If ``obj`` is a callable, wrap in a ``StateMachineState`` object and set as the target state.
         """
         if type(obj) is not StateMachineState and callable(obj):
             # we've been given a function, so wrap it in a state object
@@ -117,7 +117,10 @@ class StateMachineState(object):
 
     def add_outgoing_transition(self, obj, guard=None):
         """
-        Add a transition to follow out of the state.
+        If ``obj`` is a ``StateMachineTransition`` instance, add to the outgoing transitions.
+        If ``obj`` is callable, wrap in a ``StateMachineTransition`` instance and add to the outgoing transitions.
+        ``guard`` is optional and must be a callable object that assumes its only argument will be a ``StateSequence``
+        instance.
         """
         if guard and not callable(guard):
             raise Exception("Guard supplied to transition must be callable.")
@@ -182,7 +185,7 @@ class StateMachine(object):
 
     def write_to_file(self, file_name):
         """
-        Write the state machine to a graph file.
+        Write the state machine to a graph file with the name ``file_name``.
         """
         # first, if it exists, derive the set of problematic edges
         report = self.get_state_sequence_results()
@@ -288,8 +291,8 @@ class StateMachine(object):
 
     def add_state(self, incoming_transition, assertion_function):
         """
-        Add a state with the given assertion checking function to the state machine.
-        ``incoming_transition``
+        Add a state with the callable ``assertion_function`` to the state machine and set as the target state of
+        ``incoming_transition``.
         Return an instance of the new state so that it can be used to add transitions.
         """
 
@@ -303,6 +306,8 @@ class StateMachine(object):
     def add_transition(self, transition_function, source_state=None, target_state=None, guard=None):
         """
         Add a transition with the ``transition_function`` leading out of ``source_state``.
+        If ``target_state`` is given, it must be either a ``StateMachineState`` instance or a callable object.
+        If a ``guard`` is given, it must be a callable object whose only argument is a ``StateSequence`` instance.
         Return an instance of the new transition so that it can be used to add new states.
         """
 
@@ -372,7 +377,7 @@ class StateSequence(object):
 
     def store(self):
         """
-        Gets the dictionary used for storing data globally in the sequence.
+        Gets the ``StateMachineStore`` instance used as memory for this sequence.
         """
         return self._store
 
