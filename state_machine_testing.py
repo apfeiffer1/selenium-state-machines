@@ -61,11 +61,15 @@ class StateMachineTransition(object):
         print("Executing transition function '%s'" % self._transition_function.__name__)
         return self._transition_function(state_sequence_instance)
 
-    def set_target_state(self, state):
+    def set_target_state(self, obj):
         """
         Set the state that this transition should put the execution in.
         """
-        self._target_state = state
+        if type(obj) is not StateMachineState and callable(obj):
+            # we've been given a function, so wrap it in a state object
+            obj = StateMachineState(obj)
+        self._target_state = obj
+        return obj
 
     def get_target_state(self):
         return self._target_state
@@ -93,11 +97,15 @@ class StateMachineState(object):
         print("...no failures")
         return result
 
-    def add_outgoing_transition(self, transition):
+    def add_outgoing_transition(self, obj):
         """
         Add a transition to follow out of the state.
         """
-        self._outgoing_transitions.append(transition)
+        if type(obj) is not StateMachineTransition and callable(obj):
+            # we've been given a function, so wrap it in a transition object
+            obj = StateMachineTransition(self, obj)
+        self._outgoing_transitions.append(obj)
+        return obj
 
     def get_outgoing_transitions(self):
         return self._outgoing_transitions
@@ -127,21 +135,20 @@ class StateMachine(object):
         """
         Set up the initial configuration of the state machine.
         """
-        self._states = [StateMachineState(lambda fake_arg : True)]
-        self._transitions = []
+        self._start_state = StateMachineState(lambda fake_arg : True)
         # when the state machine is run, the first step is to turn it into a list of
         # sequences that can be run one-by-one
         self._execution_sequences = []
 
     def __repr__(self):
-        return "<StateMachine %s %s>" % (self._states, self._transitions)
+        return "<StateMachine %s>" % self._start_state
 
     def run(self):
         """
         Run the state machine and display results.
         """
         # populate the list of execution sequences
-        self._recurse(self._states[0], [self._states[0]])
+        self._recurse(self._start_state, [self._start_state])
         # map execution sequence to StateSequence instances
         self._execution_sequences = map(
             lambda (n, sequence) : StateSequence(sequence, n),
@@ -201,7 +208,6 @@ class StateMachine(object):
 
         new_state = StateMachineState(assertion_function)
         incoming_transition.set_target_state(new_state)
-        self._states.append(new_state)
         return new_state
 
     def add_transition(self, transition_function, source_state=None, target_state=None):
@@ -218,13 +224,12 @@ class StateMachine(object):
 
         if not source_state:
             # if no source state is given, assume the transition is being added
-            source_state = self._states[0]
+            source_state = self._start_state
 
         new_transition = StateMachineTransition(source_state, transition_function)
         source_state.add_outgoing_transition(new_transition)
         if target_state:
             new_transition.set_target_state(target_state)
-        self._transitions.append(new_transition)
         return new_transition
 
 
