@@ -7,7 +7,9 @@ Assertions are represented by states.
 
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
+from graphviz import Digraph
 import traceback
+import datetime
 
 
 class StateMachineCollection(object):
@@ -157,9 +159,77 @@ class StateMachine(object):
         # when the state machine is run, the first step is to turn it into a list of
         # sequences that can be run one-by-one
         self._execution_sequences = []
+        # set up testing reports
+        self._state_sequence_to_result = {}
 
     def __repr__(self):
         return "<StateMachine %s>" % self._start_state
+
+    def _get_state_set(self):
+        """
+        Stack-based traversal.
+        """
+        state_stack = [t.get_target_state() for t in self._start_state.get_outgoing_transitions()]
+        final_state_set = [self._start_state]
+        while len(state_stack) > 0:
+            # get the top element from the stack
+            current_state = state_stack.pop()
+            # add the current state to the final set
+            final_state_set.append(current_state)
+            # add to stack of states we need to process
+            state_stack += map(lambda t : t.get_target_state(), current_state.get_outgoing_transitions())
+        return final_state_set
+
+    def write_to_file(self, file_name):
+        """
+        Write the state machine to a graph file.
+        """
+        # first, if it exists, derive the set of problematic edges
+        report = self.get_state_sequence_results()
+        problematic_transitions = []
+        problematic_assertion_states = []
+
+        for sequence_instance in report:
+            if not report[sequence_instance]["result"]:
+                # if there was a failure on this sequence, we register the incoming
+                # transition as problematic
+                failing_state = report[sequence_instance]["failing_state"]
+                incoming_transition = sequence_instance.get_incoming_transition(failing_state)
+                problematic_transitions.append(incoming_transition)
+                problematic_assertion_states.append(failing_state)
+
+        graph = Digraph()
+        graph.attr("graph", fontsize="10")
+        shape = "rectangle"
+        font = "monaco"
+        for state in self._get_state_set():
+            graph.node(
+                str(id(state)),
+                str(state.get_function().__name__) if state.get_function().__name__ != "<lambda>" else "",
+                shape=shape,
+                fontname=font,
+                color="red" if state in problematic_assertion_states else "black",
+                fontcolor="red" if state in problematic_assertion_states else "black"
+            )
+            for transition in state.get_outgoing_transitions():
+                graph.edge(
+                    str(id(state)),
+                    str(id(transition.get_target_state())),
+                    transition.get_function().__name__,
+                    fontname=font,
+                    color="red" if transition in problematic_transitions else "black",
+                    fontcolor="red" if transition in problematic_transitions else "black"
+                )
+        graph.render(file_name)
+
+    def register_state_sequence_result(self, state_sequence_instance, result):
+        """
+        Associate a state sequence object with information about its execution.
+        """
+        self._state_sequence_to_result[state_sequence_instance] = result
+
+    def get_state_sequence_results(self):
+        return self._state_sequence_to_result
 
     def run(self):
         """
@@ -169,12 +239,14 @@ class StateMachine(object):
         self._recurse(self._start_state, [self._start_state])
         # map execution sequence to StateSequence instances
         self._execution_sequences = map(
-            lambda (n, sequence) : StateSequence(sequence, n),
+            lambda (n, sequence) : StateSequence(self, sequence, n),
             enumerate(self._execution_sequences)
         )
         # execute sequences
         for sequence in self._execution_sequences:
             sequence.execute()
+        # get results
+        print(self._state_sequence_to_result)
 
     def _recurse(self, current_state, current_sequence):
         """
@@ -259,7 +331,7 @@ class StateSequence(object):
     Allows a single sequence of states derived from a state machine to be executed separately from all others.
     """
 
-    def __init__(self, sequence, label):
+    def __init__(self, state_machine, sequence, label):
         # set up driver
         options = Options()
         options.headless = True
@@ -267,6 +339,7 @@ class StateSequence(object):
         self._driver = webdriver.Firefox(options=options)
         self._store = StateMachineStore()
         self._label = label
+        self._state_machine = state_machine
         # we are given a sequence of states, so we need to derive the transitions
         # from the state machine
         full_sequence = []
@@ -306,6 +379,12 @@ class StateSequence(object):
     def get_sequence(self):
         return self._sequence
 
+    def get_incoming_transition(self, state):
+        """
+        Given a state from this sequence, get the transition between the preceding state and this one.
+        """
+        return self._sequence[self._sequence.index(state)-1]
+
     def execute(self):
         """
         Execute the sequence of states/transitions.
@@ -325,7 +404,13 @@ class StateSequence(object):
             # execute the element's function with this state sequence object
             try:
                 element.execute(self)
+                self._state_machine.register_state_sequence_result(self, {"result" : True})
             except AssertionError as e:
                 print("Failure:")
                 traceback.print_exc()
+                self._state_machine.register_state_sequence_result(self, {
+                    "result": False,
+                    "failing_state" : element,
+                    "exception" : traceback.format_exc()
+                })
         print("\n")
