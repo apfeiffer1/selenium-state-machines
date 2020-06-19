@@ -10,7 +10,7 @@ The general idea is that states are sets of assertions and transitions are Selen
 
 Our documentation is [here](https://selenium-state-machines.readthedocs.io/en/latest/).
 
-The format of tests written using this library is
+Here's an example of the library being used to test the [VyPRServer](http://github.com/pyvypr/VyPRServer/) web application.
 
 ```
 import state_machine_testing as smt
@@ -26,8 +26,25 @@ def assertions_1(runner):
 
 state_machine = smt.StateMachine()
 
-t1 = state_machine.add_transition(transition_1)
-state_machine.add_state(t1, assertions_1)
+# set up state machine
+t1 = state_machine.add_transition(load_main_page)
+s1 = t1.set_target_state(assert_first_screen)
+
+t2 = s1.add_outgoing_transition(choose_tab)
+s2 = t2.set_target_state(assert_tab_selection)
+
+[...]
+
+t5 = s4.add_outgoing_transition(
+    open_function_panel,
+    guard=lambda runner : len(runner.store().get("buttons")) > 1
+)
+s5 = t5.set_target_state(assert_open_function_panel)
+
+t6 = s5.add_outgoing_transition(choose_other_function)
+s6 = t6.set_target_state(assert_other_function_selection)
 
 state_machine.run()
+
+state_machine.write_to_file("state-machine.gv")
 ```
