@@ -1,8 +1,14 @@
 # State Machines for Selenium
 
+[![Documentation Status](https://readthedocs.org/projects/selenium-state-machines/badge/?version=latest)](https://selenium-state-machines.readthedocs.io/en/latest/?badge=latest)
+
+
+
 This is a small library that allows you run Selenium tests as state machines.
 
 The general idea is that states are sets of assertions and transitions are Selenium-based transformations to perform.
+
+Our documentation is [here](https://selenium-state-machines.readthedocs.io/en/latest/).
 
 The format of tests written using this library is
 
