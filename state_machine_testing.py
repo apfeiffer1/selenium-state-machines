@@ -9,6 +9,7 @@ from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from graphviz import Digraph
 import traceback
+from multiprocessing import Process, Queue
 
 
 class StateMachineCollection(object):
@@ -159,14 +160,20 @@ class StateMachine(object):
         Set up the initial configuration of the state machine.
         """
         self._start_state = StateMachineState(lambda fake_arg : True)
+        self._states = [self._start_state]
         # when the state machine is run, the first step is to turn it into a list of
         # sequences that can be run one-by-one
         self._execution_sequences = []
         # set up testing reports
         self._state_sequence_to_result = {}
+        # map state sequence objects to processes
+        self._state_sequence_to_process = {}
 
     def __repr__(self):
         return "<StateMachine %s>" % self._start_state
+
+    def get_states(self):
+        return self._states
 
     def _get_state_set(self):
         """
@@ -224,14 +231,18 @@ class StateMachine(object):
         problematic_transitions = []
         problematic_assertion_states = []
 
-        for sequence_instance in report:
-            if not report[sequence_instance]["result"]:
-                # if there was a failure on this sequence, we register the incoming
-                # transition as problematic
-                failing_state = report[sequence_instance]["failing_state"]
-                incoming_transition = sequence_instance.get_incoming_transition(failing_state)
-                problematic_transitions.append(incoming_transition)
-                problematic_assertion_states.append(failing_state)
+        print(report)
+
+        for sequence_index in report:
+            for result in report[sequence_index]:
+                if not result["result"]:
+                    # if there was a failure on this sequence, we register the incoming
+                    # transition as problematic
+                    failing_state = self._states[result["state_index"]]
+                    incoming_transition = self._execution_sequences[result["sequence"]].\
+                        get_incoming_transition(failing_state)
+                    problematic_transitions.append(incoming_transition)
+                    problematic_assertion_states.append(failing_state)
 
         graph = Digraph()
         graph.attr("graph", fontsize="10")
@@ -257,11 +268,14 @@ class StateMachine(object):
                 )
         graph.render(file_name)
 
-    def register_state_sequence_result(self, state_sequence_instance, result):
+    def register_state_sequence_result(self, state_sequence_index, result):
         """
-        Associate a state sequence object with information about its execution.
+        Associate a state sequence instance index with information about its execution.
         """
-        self._state_sequence_to_result[state_sequence_instance] = result
+        if self._state_sequence_to_result.get(state_sequence_index):
+            self._state_sequence_to_result[state_sequence_index].append(result)
+        else:
+            self._state_sequence_to_result[state_sequence_index] = [result]
 
     def get_state_sequence_results(self):
         return self._state_sequence_to_result
@@ -270,6 +284,8 @@ class StateMachine(object):
         """
         Run the state machine and display results.
         """
+        # compute the set of states
+        self._states = self._get_state_set()
         # populate the list of execution sequences
         self._recurse(self._start_state, [self._start_state])
         # map execution sequence to StateSequence instances
@@ -277,10 +293,24 @@ class StateMachine(object):
             lambda (n, sequence) : StateSequence(self, sequence, n),
             enumerate(self._execution_sequences)
         )
-        # execute sequences
         print("\nRUNNING TESTS\n")
+        central_queue = Queue()
         for sequence in self._execution_sequences:
-            sequence.execute()
+            self._state_sequence_to_process[sequence] = Process(
+                target=sequence.execute,
+                args=(central_queue,)
+            )
+            self._state_sequence_to_process[sequence].start()
+
+        # join all processes
+        for sequence in self._execution_sequences:
+            self._state_sequence_to_process[sequence].join()
+
+        # get results
+        while not central_queue.empty():
+            top = central_queue.get()
+            self.register_state_sequence_result(top["sequence"], top)
+
         # get results
         self._output_results()
 
@@ -290,13 +320,16 @@ class StateMachine(object):
         """
         print("\nRESULTS\n")
         results = self.get_state_sequence_results()
-        for sequence in results:
+        for sequence_index in results:
+            sequence = self._execution_sequences[sequence_index]
             print(sequence)
-            if results[sequence]["result"]:
-                print("-- success")
-            else:
-                print("-- failed at assertion function '%s'" %
-                      results[sequence]["failing_state"].get_function().__name__)
+            for result in results[sequence_index]:
+                print("  -- result from function '%s'" %
+                      self._states[result["state_index"]].get_function().__name__)
+                if result["result"]:
+                    print("    -- success")
+                else:
+                    print("    -- failure")
 
     def _recurse(self, current_state, current_sequence):
         """
@@ -437,13 +470,13 @@ class StateSequence(object):
         """
         return self._sequence[self._sequence.index(state)-1]
 
-    def execute(self):
+    def execute(self, results_queue):
         """
         Execute the sequence of states/transitions.
         """
         print("-- Executing sequence %s --\n" % str(self))
         # execute all elements' functions, missing out the first empty state
-        for element in self._sequence[1:]:
+        for (n, element) in enumerate(self._sequence[1:]):
             # first, if the element is a transition, check it's guard
             if type(element) is StateMachineTransition and element.get_guard():
                 if not element.evaluate_guard(self):
@@ -456,13 +489,20 @@ class StateSequence(object):
             # execute the element's function with this state sequence object
             try:
                 element.execute(self)
-                self._state_machine.register_state_sequence_result(self, {"result" : True})
-            except AssertionError as e:
+                if type(element) is StateMachineState:
+                    results_queue.put({
+                        "sequence" : self._label,
+                        "state_index" : self._state_machine.get_states().index(element),
+                        "result" : True
+                    })
+            except Exception as e:
                 print("Failure:")
                 traceback.print_exc()
-                self._state_machine.register_state_sequence_result(self, {
-                    "result": False,
-                    "failing_state" : element,
-                    "exception" : traceback.format_exc()
-                })
+                if type(element) is StateMachineState:
+                    results_queue.put({
+                        "sequence" : self._label,
+                        "state_index": self._state_machine.get_states().index(element),
+                        "result": False,
+                        "exception" : traceback.format_exc()
+                    })
         print("\n")
