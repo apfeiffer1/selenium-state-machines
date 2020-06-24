@@ -180,12 +180,44 @@ class StateMachine(object):
             # add the current state to the final set
             final_state_set.append(current_state)
             # add to stack of states we need to process
-            state_stack += map(lambda t : t.get_target_state(), current_state.get_outgoing_transitions())
+            state_stack += filter(
+                lambda state : state not in final_state_set,
+                map(lambda t : t.get_target_state(), current_state.get_outgoing_transitions())
+            )
         return final_state_set
 
     def write_to_file(self, file_name):
         """
         Write the state machine to a graph file with the name ``file_name``.
+        """
+
+        graph = Digraph()
+        graph.attr("graph", fontsize="10")
+        shape = "Mrecord"
+        font = "monaco"
+        for state in self._get_state_set():
+            graph.node(
+                str(id(state)),
+                str(state.get_function().__name__) if state.get_function().__name__ != "<lambda>" else "",
+                shape=shape,
+                fontname=font,
+                color="black",
+                fontcolor="black"
+            )
+            for transition in state.get_outgoing_transitions():
+                graph.edge(
+                    str(id(state)),
+                    str(id(transition.get_target_state())),
+                    transition.get_function().__name__,
+                    fontname=font,
+                    color="black",
+                    fontcolor="black"
+                )
+        graph.render(file_name)
+
+    def write_results_to_file(self, file_name):
+        """
+        Write the state machine to a graph file with the name ``file_name``, with colouring based on results.
         """
         # first, if it exists, derive the set of problematic edges
         report = self.get_state_sequence_results()
@@ -203,7 +235,7 @@ class StateMachine(object):
 
         graph = Digraph()
         graph.attr("graph", fontsize="10")
-        shape = "rectangle"
+        shape = "Mrecord"
         font = "monaco"
         for state in self._get_state_set():
             graph.node(
@@ -211,8 +243,8 @@ class StateMachine(object):
                 str(state.get_function().__name__) if state.get_function().__name__ != "<lambda>" else "",
                 shape=shape,
                 fontname=font,
-                color="red" if state in problematic_assertion_states else "black",
-                fontcolor="red" if state in problematic_assertion_states else "black"
+                color="red" if state in problematic_assertion_states else "darkgreen",
+                fontcolor="red" if state in problematic_assertion_states else "darkgreen"
             )
             for transition in state.get_outgoing_transitions():
                 graph.edge(
@@ -220,8 +252,8 @@ class StateMachine(object):
                     str(id(transition.get_target_state())),
                     transition.get_function().__name__,
                     fontname=font,
-                    color="red" if transition in problematic_transitions else "black",
-                    fontcolor="red" if transition in problematic_transitions else "black"
+                    color="red" if transition in problematic_transitions else "darkgreen",
+                    fontcolor="red" if transition in problematic_transitions else "darkgreen"
                 )
         graph.render(file_name)
 
@@ -246,10 +278,25 @@ class StateMachine(object):
             enumerate(self._execution_sequences)
         )
         # execute sequences
+        print("\nRUNNING TESTS\n")
         for sequence in self._execution_sequences:
             sequence.execute()
         # get results
-        print(self._state_sequence_to_result)
+        self._output_results()
+
+    def _output_results(self):
+        """
+        Print test results after tests have been run.
+        """
+        print("\nRESULTS\n")
+        results = self.get_state_sequence_results()
+        for sequence in results:
+            print(sequence)
+            if results[sequence]["result"]:
+                print("-- success")
+            else:
+                print("-- failed at assertion function '%s'" %
+                      results[sequence]["failing_state"].get_function().__name__)
 
     def _recurse(self, current_state, current_sequence):
         """
@@ -271,7 +318,7 @@ class StateMachine(object):
             # get all child states that have already been encountered in the current sequence
             already_encountered = filter(
                 lambda transition : transition.get_target_state() in current_sequence,
-                child_transitions
+                current_state.get_outgoing_transitions()
             )
             # for each child state that is new
             for transition in child_transitions:
@@ -287,7 +334,7 @@ class StateMachine(object):
             for transition in already_encountered:
                 # recursive base case
                 # add a copy of the current sequence for each case
-                self._execution_sequences.append([s for s in current_sequence])
+                self._execution_sequences.append([s for s in current_sequence] + [transition.get_target_state()])
 
     def add_state(self, incoming_transition, assertion_function):
         """
